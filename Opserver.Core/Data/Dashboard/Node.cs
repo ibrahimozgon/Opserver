@@ -46,7 +46,7 @@ namespace StackExchange.Opserver.Data.Dashboard
         public string ServiceTag { get; internal set; }
         public Version KernelVersion { get; internal set; }
 
-        public string PrettyName => (Name ?? "").ToUpper();
+        public string PrettyName => (Name ?? "");
         public TimeSpan? UpTime => DateTime.UtcNow - LastBoot;
         public MonitorStatus MonitorStatus => Status.ToMonitorStatus();
 

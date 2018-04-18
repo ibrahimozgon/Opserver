@@ -18,7 +18,7 @@
         <script>
             var Exception = @json.AsHtml();
             $(function () {
-                Status.Exceptions.init({ store: @Model.Store.Name.ToJson(), group: @(Model.Group?.Name.ToJson()), log: @error.ApplicationName.ToJson(), id: '@error.GUID.ToString()' });
+                Status.Exceptions.init({ store: @Model.Store.Name.ToJson(), group: @(Model.Group?.Name.ToJson()), log: @error.ApplicationName.ToJson(), id: '@(error.GUID != Guid.Empty ? error.GUID.ToString() : error.Id.ToString())' });
             });
         </script>
     }
@@ -182,11 +182,13 @@
             <a href="@Url.Action(nameof(ExceptionsController.Exceptions), new { store = Model.Store.Name, log = error.ApplicationName })">@error.ApplicationName</a>
             <span class="text-muted">/</span>
             @error.Type
-            <span class="pull-right"><a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID, log = error.ApplicationName, store = Model.Store?.Name })">View Similar</a></span>
+            <span class="pull-right"><a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID!=Guid.Empty?error.GUID.ToString():error.Id.ToString(), log = error.ApplicationName, store = Model.Store?.Name })">View Similar</a></span>
         </h5>
         <p class="small text-danger js-error-message">@error.Message</p>
         <div class="error-info">
-            <pre class="stack dark"><code class="nohighlight">@ExceptionalUtils.StackTrace.HtmlPrettify(error.Detail, Current.Settings.Exceptions.StackTraceSettings).AsHtml()</code></pre>
+            <pre class="stack dark">
+<code class="nohighlight">@ExceptionalUtils.StackTrace.HtmlPrettify(error.Detail ?? "", Current.Settings.Exceptions.StackTraceSettings).AsHtml()</code>
+</pre>
             <p class="small">
                 occurred <b title="@error.CreationDate.ToLongDateString() at @error.CreationDate.ToLongTimeString()">@error.CreationDate.ToRelativeTime()</b> (@error.CreationDate.ToZuluTime()) on @error.MachineName
                 @if (!error.DeletionDate.HasValue && Current.User.IsExceptionAdmin)

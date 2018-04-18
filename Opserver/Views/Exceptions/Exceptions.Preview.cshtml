@@ -28,9 +28,9 @@ else
         <span class="pull-right">
             <a class="text-danger js-clear-all" href="#" data-url="@Url.Action(nameof(ExceptionsController.DeleteSimilar))" data-log="@log" data-group="@group" data-id="@error.GUID">@Icon.X Clear all similar</a>
             <span class="text-muted">|</span>
-            <a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID, log, group, store })" title="View exceptions with the same message in the same log">View Similar</a>
+            <a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID!=Guid.Empty?error.GUID.ToString():error.Id.ToString(), log, group, store })" title="View exceptions with the same message in the same log">View Similar</a>
             <span class="text-muted">|</span>
-            <a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID, log, group, store, byTime = true })" title="View exceptions within 5 minutes of this one">View Nearby</a>
+            <a href="@Url.Action(nameof(ExceptionsController.Similar), new { id = error.GUID!=Guid.Empty?error.GUID.ToString():error.Id.ToString(), log, group, store, byTime = true })" title="View exceptions within 5 minutes of this one">View Nearby</a>
         </span>
     </h6>
     <p class="small text-danger">@error.Message</p>

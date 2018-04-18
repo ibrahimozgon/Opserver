@@ -11,7 +11,7 @@
 }
 @section head {
     <script>
-        $(function () { Status.Exceptions.init({ store: @store.ToJson(), group: @group.ToJson(), log: @log.ToJson(), id: '@e.GUID.ToString()', enablePreviews: @(Current.Settings.Exceptions.EnablePreviews ? "true" : "false"), showingDeleted: true }); });
+        $(function () { Status.Exceptions.init({ store: @store.ToJson(), group: @group.ToJson(), log: @log.ToJson(), id: '@(e.GUID != Guid.Empty ? e.GUID.ToString() : e.Id.ToString())', enablePreviews: @(Current.Settings.Exceptions.EnablePreviews ? "true" : "false"), showingDeleted: true }); });
     </script>
 }
 <h5 class="page-header">

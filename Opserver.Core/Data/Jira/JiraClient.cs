@@ -89,21 +89,35 @@ namespace StackExchange.Opserver.Data.Jira
 
             var payload = new { fields };
 
-            var result = await client.PostAsync<JiraCreateIssueResponse, object>("issue", payload).ConfigureAwait(false);
-
-            var commentBody = RenderVariableTable("Server Variables", error.ServerVariables)
-                + RenderVariableTable("QueryString", error.QueryString)
-                + RenderVariableTable("Form", error.Form)
-                + RenderVariableTable("Cookies", error.Cookies)
-                + RenderVariableTable("RequestHeaders", error.RequestHeaders);
-
-            if (commentBody.HasValue())
+            try
             {
-                await CommentAsync(action, result, commentBody).ConfigureAwait(false);
-            }
+                var result = await client.PostAsync<JiraCreateIssueResponse, object>("issue", payload)
+                                 .ConfigureAwait(false)
+                             ?? new JiraCreateIssueResponse();
+                var commentBody = RenderVariableTable("Server Variables", error.ServerVariables)
+                                  + RenderVariableTable("QueryString", error.QueryString)
+                                  + RenderVariableTable("Form", error.Form)
+                                  + RenderVariableTable("Cookies", error.Cookies)
+                                  + RenderVariableTable("RequestHeaders", error.RequestHeaders);
 
-            result.Host = GetHost(action);
-            return result;
+                if (commentBody.HasValue())
+                    await CommentAsync(action, result, commentBody).ConfigureAwait(false);
+
+                result.Key = Current.Settings.Jira.DefaultProjectKey;
+                result.Host = GetHost(action);
+                return result;
+            }
+            catch (WebException wEx)
+            {
+                Console.WriteLine(wEx);
+                
+                return null;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                return null;
+            }
         }
 
         public async Task<string> CommentAsync(JiraAction actions, JiraCreateIssueResponse createResponse, string comment)
@@ -190,7 +204,7 @@ namespace StackExchange.Opserver.Data.Jira
             {
                 sb.AppendFormat("Reporter Account Name: {0}\r\n", accountName);
             }
-            sb.AppendFormat("Error Guid: {0}\r\n", error.GUID.ToString());
+            sb.AppendFormat("Error Guid: {0}\r\n", error.GUID != Guid.Empty ? error.GUID.ToString() : error.Id.ToString());
             sb.AppendFormat("App. Name: {0}\r\n", error.ApplicationName);
             sb.AppendFormat("Machine Name: {0}\r\n", error.MachineName);
             sb.AppendFormat("Host: {0}\r\n", error.Host);
@@ -295,6 +309,8 @@ namespace StackExchange.Opserver.Data.Jira
             string response = Encoding.UTF8.GetString(responseBytes);
             if (typeof(TResponse) == typeof(string))
                 return response as TResponse;
+            if (string.IsNullOrEmpty(response))
+                return default(TResponse);
 
             return JSON.Deserialize<TResponse>(response);
         }

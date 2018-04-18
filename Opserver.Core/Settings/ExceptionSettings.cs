@@ -108,6 +108,9 @@ namespace StackExchange.Opserver
             /// Connection string for this store's database
             /// </summary>
             public string ConnectionString { get; set; }
+
+            public bool IsArabam { get; set; }
+
         }
 
         private StackTraceSettings GetStackTraceSettings()

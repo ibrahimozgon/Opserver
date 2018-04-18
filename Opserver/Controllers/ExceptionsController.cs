@@ -126,7 +126,7 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/similar")]
-        public async Task<ActionResult> Similar(Guid id, bool byTime = false, int rangeInSeconds = 5 * 60)
+        public async Task<ActionResult> Similar(string id, bool byTime = false, int rangeInSeconds = 5 * 60)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
             if (e == null)
@@ -173,7 +173,7 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/detail")]
-        public async Task<ActionResult> Detail(Guid id)
+        public async Task<ActionResult> Detail(string id)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
             var vd = GetModel(null);
@@ -182,7 +182,7 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/preview")]
-        public async Task<ActionResult> Preview(Guid id)
+        public async Task<ActionResult> Preview(string id)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
 
@@ -192,7 +192,7 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/detail/json"), AlsoAllow(Roles.Anonymous)]
-        public async Task<JsonResult> DetailJson(Guid id)
+        public async Task<JsonResult> DetailJson(string id)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
             if (e == null)
@@ -249,7 +249,7 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/delete-similar"), AcceptVerbs(HttpVerbs.Post), OnlyAllow(Roles.ExceptionsAdmin)]
-        public async Task<ActionResult> DeleteSimilar(Guid id)
+        public async Task<ActionResult> DeleteSimilar(string id)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
             await CurrentStore.DeleteSimilarErrorsAsync(e).ConfigureAwait(false);
@@ -300,13 +300,12 @@ namespace StackExchange.Opserver.Controllers
         }
 
         [Route("exceptions/jiraaction"), AcceptVerbs(HttpVerbs.Post), OnlyAllow(Roles.ExceptionsAdmin)]
-        public async Task<ActionResult> JiraAction(Guid id, int actionid)
+        public async Task<ActionResult> JiraAction(string id, int actionid)
         {
             var e = await CurrentStore.GetErrorAsync(CurrentLog, id).ConfigureAwait(false);
-            var user = Current.User;
             var action = Current.Settings.Jira.Actions.Find(i => i.Id == actionid);
             var jiraClient = new JiraClient(Current.Settings.Jira);
-            var result = await jiraClient.CreateIssueAsync(action, e, user == null ? "" : user.AccountName).ConfigureAwait(false);
+            var result = await jiraClient.CreateIssueAsync(action, e, "").ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(result.Key))
             {

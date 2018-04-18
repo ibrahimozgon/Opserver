@@ -89,14 +89,32 @@ namespace StackExchange.Opserver.Data.Exceptions
                 Settings.PollIntervalSeconds.Seconds(),
                 async () =>
                 {
-                    var result = await QueryListAsync<Application>($"Applications Fetch: {Name}", @"
+                    List<Application> result;
+                    if (!Settings.IsArabam)
+                    {
+                        result = await QueryListAsync<Application>($"Applications Fetch: {Name}", @"
 Select ApplicationName as Name, 
        Sum(DuplicateCount) as ExceptionCount,
 	   Sum(Case When CreationDate > DateAdd(Second, -@RecentSeconds, GETUTCDATE()) Then DuplicateCount Else 0 End) as RecentExceptionCount,
 	   MAX(CreationDate) as MostRecent
   From Exceptions
  Where DeletionDate Is Null
- Group By ApplicationName", new {Current.Settings.Exceptions.RecentSeconds}).ConfigureAwait(false);
+ Group By ApplicationName", new { Current.Settings.Exceptions.RecentSeconds }).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        result = await QueryListAsync<Application>($"Applications Fetch: {Name}", @"
+Select Service as Name, 
+       COUNT(Id) as ExceptionCount,
+	   Sum(Case When Date > DateAdd(Second, -@RecentSeconds, GETDATE()) Then 1 Else 0 End) as RecentExceptionCount,
+	   MAX(Date) as MostRecent
+  From " + Settings.TableName +
+ " WHERE Level='ERROR'" +
+ " AND Exception not like 'System.Web.HttpException (0x80004005)%'" +
+ " AND Exception not like '%System.IO.IOException: Error reading MIME multipart body%'" +
+ " Group By Service", new { Current.Settings.Exceptions.RecentSeconds }).ConfigureAwait(false);
+                    }
+
                     result.ForEach(a =>
                     {
                         a.StoreName = Name;
@@ -190,8 +208,16 @@ Select ApplicationName as Name,
         // TODO: Move this into a SQL-specific provider maybe, something swappable
         public Task<List<Error>> GetErrorsAsync(SearchParams search)
         {
+            return Settings.IsArabam
+                ? GetArabamErrorsAsync(search)
+                : GetExceptionalLogsAsync(search);
+        }
+
+        private Task<List<Error>> GetExceptionalLogsAsync(SearchParams search)
+        {
             var sb = StringBuilderCache.Get();
             bool firstWhere = true;
+
             void AddClause(string clause)
             {
                 sb.Append(firstWhere ? " Where " : "   And ").AppendLine(clause);
@@ -224,21 +250,99 @@ Select e.Id,
             {
                 AddClause("ApplicationName In @logs");
             }
+
             if (search.Message.HasValue())
             {
                 AddClause("Message = @Message");
             }
+
             if (!search.IncludeDeleted)
             {
                 AddClause("DeletionDate Is Null");
             }
+
             if (search.StartDate.HasValue)
             {
                 AddClause("CreationDate >= @StartDate");
             }
+
             if (search.EndDate.HasValue)
             {
                 AddClause("CreationDate <= @EndDate");
+            }
+
+            if (search.SearchQuery.HasValue())
+            {
+                AddClause("(Message Like @query Or Url Like @query)");
+            }
+
+            sb.Append(@")
+  Select Top {=Count} *
+    From list");
+            if (search.StartAt.HasValue)
+            {
+                sb.Append(@"
+   Where rowNum > (Select Top 1 rowNum From list Where GUID = @StartAt)");
+            }
+
+            sb.Append(@"
+Order By rowNum");
+
+            var sql = sb.ToStringRecycle();
+
+            return QueryListAsync<Error>($"{nameof(GetErrorsAsync)}() for {Name}", sql, new
+            {
+                logs,
+                search.Message,
+                search.StartDate,
+                search.EndDate,
+                query = "%" + search.SearchQuery + "%",
+                search.StartAt,
+                search.Count
+            });
+        }
+
+        public async Task<List<Error>> GetArabamErrorsAsync(SearchParams search)
+        {
+            var sb = StringBuilderCache.Get();
+            bool firstWhere = true;
+            void AddClause(string clause)
+            {
+                sb.Append(firstWhere ? " Where " : "   And ").AppendLine(clause);
+                firstWhere = false;
+            }
+
+            sb.Append(@"With list As (
+SELECT TOP 1000 [Id]
+      ,[Date]
+      ,[Thread]
+      ,[Level]
+      ,[Logger]
+      ,[Message]
+      ,[Exception]
+      ,[Service]
+	  ,ROW_NUMBER() Over(").Append(GetArabamSortString(search.Sort)).Append(@") rowNum
+  From ").Append(TableName).AppendLine(" e");
+
+            AddClause("Level='ERROR'");
+            AddClause("Exception not like 'System.Web.HttpException (0x80004005)%'");
+            AddClause("Exception not like '%System.IO.IOException: Error reading MIME multipart body%'");
+            var logs = GetAppNames(search);
+            if (search.Log.HasValue() || search.Group.HasValue())
+            {
+                AddClause("Service In @logs");
+            }
+            if (search.Message.HasValue())
+            {
+                AddClause("Message = @Message");
+            }
+            if (search.StartDate.HasValue)
+            {
+                AddClause("Date >= @StartDate");
+            }
+            if (search.EndDate.HasValue)
+            {
+                AddClause("Date <= @EndDate");
             }
             if (search.SearchQuery.HasValue())
             {
@@ -257,7 +361,7 @@ Order By rowNum");
 
             var sql = sb.ToStringRecycle();
 
-            return QueryListAsync<Error>($"{nameof(GetErrorsAsync)}() for {Name}", sql, new
+            var arabamLogs = await QueryListAsync<ArabamLog>($"{nameof(GetErrorsAsync)}() for {Name}", sql, new
             {
                 logs,
                 search.Message,
@@ -267,6 +371,24 @@ Order By rowNum");
                 search.StartAt,
                 search.Count
             });
+            return arabamLogs.Select(ConvertArabamToExceptionalLog).ToList();
+
+        }
+
+        private static Error ConvertArabamToExceptionalLog(ArabamLog s)
+        {
+            return new Error
+            {
+                Exception = new Exception(s.Exception),
+                Message = s.Message,
+                MachineName = s.Service,
+                ApplicationName = s.Service,
+                CreationDate = s.Date,
+                Id = s.Id,
+                Type = s.Level,
+                Detail = s.Exception,
+                DuplicateCount = 1,
+            };
         }
 
         public IEnumerable<string> GetAppNames(SearchParams search) => GetAppNames(search.Group, search.Log);
@@ -287,6 +409,27 @@ Order By rowNum");
                         yield return a.Name;
                     }
                 }
+            }
+        }
+        private string GetArabamSortString(ExceptionSorts sort)
+        {
+            switch (sort)
+            {
+                case ExceptionSorts.AppAsc:
+                    return " Order By Service, Date Desc";
+                case ExceptionSorts.AppDesc:
+                    return " Order By Service Desc, Date Desc";
+                case ExceptionSorts.TypeAsc:
+                    return " Order By Right(e.Level, charindex('.', reverse(e.Level) + '.') - 1), Date Desc";
+                case ExceptionSorts.TypeDesc:
+                    return " Order By Right(e.Level, charindex('.', reverse(e.Level) + '.') - 1) Desc, Date Desc";
+                case ExceptionSorts.MessageAsc:
+                    return " Order By Message, Date Desc";
+                case ExceptionSorts.MessageDesc:
+                    return " Order By Message Desc, Date Desc";
+                //case ExceptionSorts.TimeDesc:
+                default:
+                    return " Order By Date Desc";
             }
         }
 
@@ -336,6 +479,9 @@ Order By rowNum");
 
         public Task<int> DeleteAllErrorsAsync(List<string> apps)
         {
+            if (Settings.IsArabam)
+                return null;
+
             return ExecTaskAsync($"{nameof(DeleteAllErrorsAsync)}() for {Name}", @"
 Update Exceptions 
    Set DeletionDate = GETUTCDATE() 
@@ -346,17 +492,23 @@ Update Exceptions
 
         public Task<int> DeleteSimilarErrorsAsync(Error error)
         {
+            if (Settings.IsArabam)
+                return null;
+
             return ExecTaskAsync($"{nameof(DeleteSimilarErrorsAsync)}('{error.GUID}') (app: {error.ApplicationName}) for {Name}", @"
 Update Exceptions 
    Set DeletionDate = GETUTCDATE() 
  Where ApplicationName = @ApplicationName
    And Message = @Message
    And DeletionDate Is Null
-   And IsProtected = 0", new {error.ApplicationName, error.Message});
+   And IsProtected = 0", new { error.ApplicationName, error.Message });
         }
 
         public Task<int> DeleteErrorsAsync(List<Guid> ids)
         {
+            if (Settings.IsArabam)
+                return null;
+
             return ExecTaskAsync($"{nameof(DeleteErrorsAsync)}({ids.Count} Guids) for {Name}", @"
 Update Exceptions 
    Set DeletionDate = GETUTCDATE() 
@@ -365,12 +517,46 @@ Update Exceptions
    And GUID In @ids", new { ids });
         }
 
-        public async Task<Error> GetErrorAsync(string app, Guid guid)
+        public async Task<Error> GetErrorAsync(string app, string id)
+        {
+            return Settings.IsArabam
+                ? await GetArabamErrorAsync(id)
+                : await GetExceptionalErrorAsync(id);
+        }
+
+        private async Task<Error> GetArabamErrorAsync(string id)
+        {
+            try
+            {
+                ArabamLog sqlError;
+                using (MiniProfiler.Current.Step(nameof(GetErrorAsync) + "() (guid: " + id + ") for " + Name))
+                using (var c = await GetConnectionAsync().ConfigureAwait(false))
+                {
+                    sqlError = await c.QueryFirstOrDefaultAsync<ArabamLog>(@"
+    Select Top 1 * 
+      From " + Settings.TableName +
+     " Where Id = @id", new { id }, QueryTimeout).ConfigureAwait(false);
+                }
+
+                if (sqlError == null) return null;
+
+                // everything is in the JSON, but not the columns and we have to deserialize for collections anyway
+                // so use that deserialized version and just get the properties that might change on the SQL side and apply them
+                return ConvertArabamToExceptionalLog(sqlError);
+            }
+            catch (Exception e)
+            {
+                Current.LogException(e);
+                return null;
+            }
+        }
+
+        private async Task<Error> GetExceptionalErrorAsync(string guid)
         {
             try
             {
                 Error sqlError;
-                using (MiniProfiler.Current.Step(nameof(GetErrorAsync) + "() (guid: " + guid.ToString() + ") for " + Name))
+                using (MiniProfiler.Current.Step(nameof(GetErrorAsync) + "() (guid: " + guid + ") for " + Name))
                 using (var c = await GetConnectionAsync().ConfigureAwait(false))
                 {
                     sqlError = await c.QueryFirstOrDefaultAsync<Error>(@"
@@ -378,6 +564,7 @@ Update Exceptions
       From Exceptions 
      Where GUID = @guid", new { guid }, commandTimeout: QueryTimeout).ConfigureAwait(false);
                 }
+
                 if (sqlError == null) return null;
 
                 // everything is in the JSON, but not the columns and we have to deserialize for collections anyway
@@ -398,10 +585,10 @@ Update Exceptions
 
         public async Task<bool> ProtectErrorAsync(Guid guid)
         {
-              return await ExecTaskAsync($"{nameof(ProtectErrorAsync)}() (guid: {guid}) for {Name}", @"
+            return await ExecTaskAsync($"{nameof(ProtectErrorAsync)}() (guid: {guid}) for {Name}", @"
 Update Exceptions 
    Set IsProtected = 1, DeletionDate = Null
- Where GUID = @guid", new {guid}).ConfigureAwait(false) > 0;
+ Where GUID = @guid", new { guid }).ConfigureAwait(false) > 0;
         }
 
         public async Task<bool> DeleteErrorAsync(Guid guid)
