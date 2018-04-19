@@ -78,6 +78,7 @@ namespace StackExchange.Opserver
             /// The name of the table exceptions are stored in. "Exceptions" is the default.
             /// </summary>
             public string TableName { get; set; }
+            public string ServiceTableName { get; set; }
 
             /// <summary>
             /// Whether to include this store in the header total
