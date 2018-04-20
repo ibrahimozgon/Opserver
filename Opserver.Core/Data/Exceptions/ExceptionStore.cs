@@ -104,8 +104,7 @@ Select ApplicationName as Name,
                     }
                     else
                     {
-                        result = await GetArabamApplications(TableName);
-                        result.AddRange(await GetArabamApplications(ServiceTableName));
+                        result = await GetArabamApplications();
                     }
 
                     result.ForEach(a =>
@@ -117,14 +116,18 @@ Select ApplicationName as Name,
                 },
                 afterPoll: cache => UpdateApplicationGroups()));
 
-        private async Task<List<Application>> GetArabamApplications(string tableName)
+        private async Task<List<Application>> GetArabamApplications()
         {
-            return await QueryListAsync<Application>($"Applications Fetch: {tableName}", @"
-Select Service as Name, 
-       COUNT(Id) as ExceptionCount,
-	   Sum(Case When Date > DateAdd(Second, -@RecentSeconds, GETDATE()) Then 1 Else 0 End) as RecentExceptionCount,
-	   MAX(Date) as MostRecent
-  From " + tableName + @" WHERE Level='ERROR' AND Exception not like 'System.Web.HttpException (0x80004005)%' AND Exception not like '%System.IO.IOException: Error reading MIME multipart body%' Group By Service",
+            return await QueryListAsync<Application>($"Applications Fetch: {TableName}", @"
+  Select u.Service as Name, 
+       COUNT(u.Id) as ExceptionCount,
+	   Sum(Case When u.Date > DateAdd(Second, -10, GETDATE()) Then 1 Else 0 End) as RecentExceptionCount,
+	   MAX(u.Date) as MostRecent
+ FROM (SELECT * FROM " + TableName + @" (NOLOCK) UNION ALL SELECT * FROM " + ServiceTableName + @" (NOLOCK)
+  WHERE Level='ERROR' 
+  AND Exception not like 'System.Web.HttpException (0x80004005)%' 
+  AND Exception not like '%System.IO.IOException: Error reading MIME multipart body%') AS u
+  GROUP By u.Service",
                 new { Current.Settings.Exceptions.RecentSeconds }).ConfigureAwait(false);
         }
 
@@ -308,13 +311,11 @@ Order By rowNum");
 
         public async Task<List<Error>> GetArabamErrorsAsync(SearchParams search)
         {
-            var uiLogs = await GetArabamErrors(TableName, search);
-            var serviceLogs = await GetArabamErrors(ServiceTableName, search);
-            uiLogs.AddRange(serviceLogs);
+            var uiLogs = await GetArabamErrors(search);
             return uiLogs;
         }
 
-        private async Task<List<Error>> GetArabamErrors(string tableName, SearchParams search)
+        private async Task<List<Error>> GetArabamErrors(SearchParams search)
         {
             var sb = StringBuilderCache.Get();
             bool firstWhere = true;
@@ -326,7 +327,7 @@ Order By rowNum");
             }
 
             sb.Append(@"With list As (
-SELECT TOP 1000 [Id]
+SELECT [Id]
       ,[Date]
       ,[Thread]
       ,[Level]
@@ -334,8 +335,10 @@ SELECT TOP 1000 [Id]
       ,[Message]
       ,[Exception]
       ,[Service]
-	  ,ROW_NUMBER() Over(").Append(GetArabamSortString(search.Sort)).Append(@") rowNum
-  From ").Append(tableName).AppendLine(" e");
+	  ,ROW_NUMBER() Over(")
+                .Append(GetArabamSortString(search.Sort))
+                .Append(@") rowNum FROM (SELECT * FROM " + TableName + @" (nolock) UNION ALL SELECT * FROM " +
+                        ServiceTableName + " (NOLOCK) ) AS u ");
 
             AddClause("Level='ERROR'");
             AddClause("Exception not like 'System.Web.HttpException (0x80004005)%'");
@@ -535,15 +538,11 @@ Update Exceptions
                 ArabamLog sqlError;
                 using (MiniProfiler.Current.Step(nameof(GetErrorAsync) + "() (guid: " + id + ") for " + Name))
                 {
-                    sqlError = await GetArabamErrorById(id, TableName, appName);
+                    sqlError = await GetArabamErrorById(id, appName);
                 }
 
                 if (sqlError == null)
-                {
-                    sqlError = await GetArabamErrorById(id, ServiceTableName, appName);
-                    if (sqlError == null)
-                        return null;
-                }
+                    return null;
 
                 // everything is in the JSON, but not the columns and we have to deserialize for collections anyway
                 // so use that deserialized version and just get the properties that might change on the SQL side and apply them
@@ -556,16 +555,16 @@ Update Exceptions
             }
         }
 
-        private async Task<ArabamLog> GetArabamErrorById(string id, string tableName, string appName)
+        private async Task<ArabamLog> GetArabamErrorById(string id, string appName)
         {
             ArabamLog sqlError;
             using (var c = await GetConnectionAsync().ConfigureAwait(false))
             {
-                sqlError = await c.QueryFirstOrDefaultAsync<ArabamLog>(@"
-    Select Top 1 * 
-      From " + tableName +
-                                                                       " Where Id = @id AND Service = @appName",
-                    new { id, appName }, QueryTimeout).ConfigureAwait(false);
+                var sql = @"Select Top 1 * FROM (SELECT * FROM " + TableName + @" (nolock) UNION ALL SELECT * FROM " + ServiceTableName + " (NOLOCK)) AS u Where u.Id =@id";
+                if (!string.IsNullOrEmpty(appName))
+                    sql += " AND Service = @appName";
+
+                sqlError = await c.QueryFirstOrDefaultAsync<ArabamLog>(sql, new { id, appName }, QueryTimeout).ConfigureAwait(false);
             }
 
             return sqlError;
