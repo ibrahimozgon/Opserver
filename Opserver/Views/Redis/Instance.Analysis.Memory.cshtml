@@ -6,9 +6,11 @@
     var serverInfo = RedisInstance.Get(Model.ConnectionInfo);
 }
 @helper TopKeys(KeyStats ks) {
-    foreach (var tk in ks.TopKeys)
-    {
-@:@tk.Value (@tk.Key.ToComma() bytes)
+    if(ks?.TopKeys != null){
+        foreach (var tk in ks.TopKeys)
+        {
+            @:@tk.Value (@tk.Key.ToComma() bytes)
+        }
     }
 }
 @helper Percent(long bytes) {
