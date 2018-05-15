@@ -364,8 +364,7 @@ SELECT [Id]
    Where rowNum > (Select Top 1 rowNum From list Where GUID = @StartAt)");
             }
 
-            sb.Append(@"
-Order By rowNum");
+            sb.Append(@" Order By rowNum");
 
             var sql = sb.ToStringRecycle();
 
