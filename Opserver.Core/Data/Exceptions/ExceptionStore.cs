@@ -19,7 +19,7 @@ namespace StackExchange.Opserver.Data.Exceptions
         public string Name => Settings.Name;
         public string Description => Settings.Description;
         public string TableName => Settings.TableName.IsNullOrEmptyReturn("Exceptions");
-        public string ServiceTableName => Settings.ServiceTableName.IsNullOrEmptyReturn("[dbo].[ServiceLog]");
+        public string ServiceTableName => Settings.ServiceTableName.IsNullOrEmptyReturn("[dbo].[ExtendedServiceLog]");
         public ExceptionsSettings.Store Settings { get; internal set; }
 
         public override int MinSecondsBetweenPolls => 1;
@@ -119,7 +119,7 @@ Select ApplicationName as Name,
         private async Task<List<Application>> GetArabamApplications()
         {
             return await QueryListAsync<Application>($"Applications Fetch: {TableName}", @"
-  Select u.Service as Name, 
+  Select u.ApplicationName as Name, 
        COUNT(u.Id) as ExceptionCount,
 	   Sum(Case When u.Date > DateAdd(Second, -10, GETDATE()) Then 1 Else 0 End) as RecentExceptionCount,
 	   MAX(u.Date) as MostRecent
@@ -127,7 +127,7 @@ Select ApplicationName as Name,
   WHERE Level='ERROR' 
   AND Exception not like 'System.Web.HttpException (0x80004005)%' 
   AND Exception not like '%System.IO.IOException: Error reading MIME multipart body%') AS u
-  GROUP By u.Service",
+  GROUP By u.ApplicationName",
                 new { Current.Settings.Exceptions.RecentSeconds }).ConfigureAwait(false);
         }
 
@@ -311,12 +311,6 @@ Order By rowNum");
 
         public async Task<List<Error>> GetArabamErrorsAsync(SearchParams search)
         {
-            var uiLogs = await GetArabamErrors(search);
-            return uiLogs;
-        }
-
-        private async Task<List<Error>> GetArabamErrors(SearchParams search)
-        {
             var sb = StringBuilderCache.Get();
             bool firstWhere = true;
 
@@ -329,12 +323,18 @@ Order By rowNum");
             sb.Append(@"With list As (
 SELECT [Id]
       ,[Date]
-      ,[Thread]
       ,[Level]
       ,[Logger]
       ,[Message]
       ,[Exception]
-      ,[Service]
+      ,[MachineName]
+      ,[Url]
+      ,[IpAddress]
+      ,[AuthToken]
+      ,[ApplicationName]
+      ,[ApiKey]
+      ,[AppVersion]
+      ,[UserAgent]
 	  ,ROW_NUMBER() Over(")
                 .Append(GetArabamSortString(search.Sort))
                 .Append(@") rowNum FROM (SELECT * FROM " + TableName + @" (nolock) UNION ALL SELECT * FROM " +
@@ -345,7 +345,7 @@ SELECT [Id]
             AddClause("Exception not like '%System.IO.IOException: Error reading MIME multipart body%'");
             var logs = GetAppNames(search);
             if (search.Log.HasValue() || search.Group.HasValue())
-                AddClause("Service In @logs");
+                AddClause("ApplicationName In @logs");
             if (search.Message.HasValue())
                 AddClause("Message = @Message");
             if (search.StartDate.HasValue)
@@ -381,20 +381,49 @@ SELECT [Id]
             return arabamLogs.Select(ConvertArabamToExceptionalLog).ToList();
         }
 
-        private static Error ConvertArabamToExceptionalLog(ArabamLog s)
+        private Error ConvertArabamToExceptionalLog(ArabamLog s)
         {
-            return new Error
+            return new ArabamError
             {
                 Exception = new Exception(s.Exception),
                 Message = s.Message,
-                MachineName = s.Service,
-                ApplicationName = s.Service,
+                MachineName = s.MachineName,
+                ApplicationName = s.ApplicationName,
                 CreationDate = s.Date,
                 Id = s.Id,
                 Type = s.Level,
                 Detail = s.Exception,
+                IPAddress = s.IpAddress,
+                UrlPath = s.Url,
+                Host = FindHost(s.Url),
                 DuplicateCount = 1,
+                AppName = FindAppName(s.ApiKey),
+                AppVersion = s.AppVersion,
+                AuthToken = s.AuthToken,
+                UserAgent = s.UserAgent
             };
+        }
+
+        private string FindAppName(string apiKey)
+        {
+            if (string.IsNullOrEmpty(apiKey))
+                return null;
+            if (apiKey == Settings.AndroidApiKey)
+                return "Android";
+            if (apiKey == Settings.IosApiKey)
+                return "IOS";
+            return apiKey;
+        }
+
+        private static string FindHost(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+                return url;
+            var host = url.Replace("https://", "").Replace("http://", "");
+            var slashIndex = host.IndexOf("/", StringComparison.InvariantCulture);
+            if (slashIndex <= 0)
+                return host;
+            return host.Substring(0, slashIndex);
         }
 
         public IEnumerable<string> GetAppNames(SearchParams search) => GetAppNames(search.Group, search.Log);
@@ -422,9 +451,9 @@ SELECT [Id]
             switch (sort)
             {
                 case ExceptionSorts.AppAsc:
-                    return " Order By Service, Date Desc";
+                    return " Order By [ApplicationName], Date Desc";
                 case ExceptionSorts.AppDesc:
-                    return " Order By Service Desc, Date Desc";
+                    return " Order By [ApplicationName] Desc, Date Desc";
                 case ExceptionSorts.TypeAsc:
                     return " Order By Right(e.Level, charindex('.', reverse(e.Level) + '.') - 1), Date Desc";
                 case ExceptionSorts.TypeDesc:
@@ -433,7 +462,22 @@ SELECT [Id]
                     return " Order By Message, Date Desc";
                 case ExceptionSorts.MessageDesc:
                     return " Order By Message Desc, Date Desc";
-                //case ExceptionSorts.TimeDesc:
+                case ExceptionSorts.UrlAsc:
+                    return " Order By Url, Date Desc";
+                case ExceptionSorts.UrlDesc:
+                    return " Order By Url Desc, Date Desc";
+                case ExceptionSorts.IPAddressAsc:
+                    return " Order By IPAddress, Date Desc";
+                case ExceptionSorts.IPAddressDesc:
+                    return " Order By IPAddress Desc, Date Desc";
+                case ExceptionSorts.HostAsc:
+                    return " Order By Url, Date Desc";
+                case ExceptionSorts.HostDesc:
+                    return " Order By Url Desc, Date Desc";
+                case ExceptionSorts.MachineNameAsc:
+                    return " Order By MachineName, Date Desc";
+                case ExceptionSorts.MachineNameDesc:
+                    return " Order By MachineName Desc, Date Desc";
                 default:
                     return " Order By Date Desc";
             }
@@ -561,7 +605,7 @@ Update Exceptions
             {
                 var sql = @"Select Top 1 * FROM (SELECT * FROM " + TableName + @" (nolock) UNION ALL SELECT * FROM " + ServiceTableName + " (NOLOCK)) AS u Where u.Id =@id";
                 if (!string.IsNullOrEmpty(appName))
-                    sql += " AND Service = @appName";
+                    sql += " AND [ApplicationName] = @appName";
 
                 sqlError = await c.QueryFirstOrDefaultAsync<ArabamLog>(sql, new { id, appName }, QueryTimeout).ConfigureAwait(false);
             }

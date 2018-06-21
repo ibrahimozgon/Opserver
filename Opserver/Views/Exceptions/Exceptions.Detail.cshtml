@@ -3,6 +3,7 @@
 @using StackExchange.Exceptional
 @using StackExchange.Opserver
 @using StackExchange.Opserver.Controllers
+@using StackExchange.Opserver.Data.Exceptions
 @model StackExchange.Opserver.Views.Exceptions.ExceptionsModel
 @{
     var error = Model.Exception;
@@ -189,16 +190,29 @@
             <pre class="stack dark">
 <code class="nohighlight">@ExceptionalUtils.StackTrace.HtmlPrettify(error.Detail ?? "", Current.Settings.Exceptions.StackTraceSettings).AsHtml()</code>
 </pre>
+            @{
+                if (error is ArabamError arabamError)
+                {
+                    <p class="small"><b>Authentication Token:</b> @arabamError.AuthToken</p>
+                    <p class="small"><b>Mobile App Type:</b> @arabamError.AppName</p>
+                    <p class="small"><b>Application Version:</b>  @arabamError.AppVersion</p>
+                    <p class="small"><b>UserAgent:</b> @arabamError.UserAgent</p>
+                }
+            }
+            <hr/>
             <p class="small">
                 occurred <b title="@error.CreationDate.ToLongDateString() at @error.CreationDate.ToLongTimeString()">@error.CreationDate.ToRelativeTime()</b> (@error.CreationDate.ToZuluTime()) on @error.MachineName
                 @if (!error.DeletionDate.HasValue && Current.User.IsExceptionAdmin)
                 {
-                    <span class="text-muted pipe-delim js-exception-actions">(<a href="#" data-url="@Url.Action(nameof(ExceptionsController.Delete))" title="delete this error from the log"><i class="fa fa-times fa-fw text-danger" aria-hidden="true"></i>delete</a>
-                        @if (!error.IsProtected) {
+                    <span class="text-muted pipe-delim js-exception-actions">
+                        (<a href="#" data-url="@Url.Action(nameof(ExceptionsController.Delete))" title="delete this error from the log"><i class="fa fa-times fa-fw text-danger" aria-hidden="true"></i>delete</a>
+                        @if (!error.IsProtected)
+                        {
                             <span class="text-muted">|</span>
                             <a href="#" data-url="@Url.Action(nameof(ExceptionsController.Protect))" title="protect this error"><i class="fa fa-lock fa-fw text-warning" aria-hidden="true"></i>protect</a>
                         }
-                     )</span>
+                        )
+                    </span>
                 }
             </p>
             @if ((Current.Settings.Jira?.Enabled ?? false) && Current.User.IsExceptionAdmin)

@@ -79,6 +79,8 @@ namespace StackExchange.Opserver
             /// </summary>
             public string TableName { get; set; }
             public string ServiceTableName { get; set; }
+            public string AndroidApiKey { get; set; }
+            public string IosApiKey { get; set; }
 
             /// <summary>
             /// Whether to include this store in the header total
