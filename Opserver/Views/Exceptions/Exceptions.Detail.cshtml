@@ -190,6 +190,7 @@
             <pre class="stack dark">
 <code class="nohighlight">@ExceptionalUtils.StackTrace.HtmlPrettify(error.Detail ?? "", Current.Settings.Exceptions.StackTraceSettings).AsHtml()</code>
 </pre>
+            <p class="small"><b>Url:</b> <a href="@error.UrlPath">@error.UrlPath</a></p>
             @{
                 if (error is ArabamError arabamError)
                 {
@@ -199,7 +200,7 @@
                     <p class="small"><b>UserAgent:</b> @arabamError.UserAgent</p>
                 }
             }
-            <hr/>
+            <hr />
             <p class="small">
                 occurred <b title="@error.CreationDate.ToLongDateString() at @error.CreationDate.ToLongTimeString()">@error.CreationDate.ToRelativeTime()</b> (@error.CreationDate.ToZuluTime()) on @error.MachineName
                 @if (!error.DeletionDate.HasValue && Current.User.IsExceptionAdmin)
